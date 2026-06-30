@@ -1,7 +1,6 @@
 """
-UI 테스트 전용 스크립트 (customtkinter 버전)
-- selenium 없이 실행 가능
-- 업로드 단계를 가짜 딜레이로 대체해서 UI 흐름만 확인
+UI 테스트 전용 (selenium 없이 실행)
+업로드 단계를 가짜 딜레이로 대체
 """
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -10,8 +9,7 @@ import queue
 import os
 import json
 import time
-import tempfile
-import shutil
+import glob
 from datetime import datetime
 
 import openpyxl
@@ -39,6 +37,7 @@ def save_config(user_id, user_pw):
 
 
 def split_excel(file_path: str, output_dir: str):
+    os.makedirs(output_dir, exist_ok=True)
     wb = openpyxl.load_workbook(file_path)
     ws = wb.active
     all_rows = list(ws.iter_rows(values_only=True))
@@ -63,57 +62,108 @@ def split_excel(file_path: str, output_dir: str):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-
-        self.title("현금영수증 자동 업로드")
-        self.geometry("600x740")
-        self.resizable(False, False)
+        self.title("현금영수증 자동 업로드  [UI 테스트 모드]")
+        self.geometry("660x780")
+        self.minsize(620, 500)
+        self.resizable(True, True)
 
         self.config_data = load_config()
         self.msg_queue: queue.Queue = queue.Queue()
         self.running = False
+        self.split_files: list = []   # 분할 완료 후 저장
 
         self._build_ui()
         self._poll_queue()
 
+    # ── UI 구성 ──────────────────────────────────
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        # ── 제목 ──
-        title_frame = ctk.CTkFrame(self, fg_color="transparent")
+        # 전체를 스크롤 가능한 프레임으로 감쌈
+        sc = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        sc.grid(row=0, column=0, sticky="nsew")
+        sc.grid_columnconfigure(0, weight=1)
+
+        # 제목
+        title_frame = ctk.CTkFrame(sc, fg_color="transparent")
         title_frame.grid(row=0, column=0, padx=24, pady=(24, 0), sticky="ew")
+        ctk.CTkLabel(title_frame, text="현금영수증 자동 업로드",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+        ctk.CTkLabel(title_frame, text="토스페이먼츠 현금영수증 일괄 업로드 도우미  ★ UI 테스트 모드 ★",
+                     font=ctk.CTkFont(size=12), text_color="#e65100").pack(anchor="w", pady=(2, 0))
 
-        ctk.CTkLabel(
-            title_frame, text="현금영수증 자동 업로드",
-            font=ctk.CTkFont(size=22, weight="bold")
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_frame, text="토스페이먼츠 현금영수증 일괄 업로드 도우미",
-            font=ctk.CTkFont(size=12), text_color="gray"
-        ).pack(anchor="w", pady=(2, 0))
-
-        # ── 1. 파일 선택 ──
-        f1 = ctk.CTkFrame(self)
+        # ── Step 1. 파일 분할 ──
+        f1 = ctk.CTkFrame(sc)
         f1.grid(row=1, column=0, padx=24, pady=(16, 0), sticky="ew")
         f1.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(f1, text="1.  현금영수증 엑셀 파일 선택",
+        ctk.CTkLabel(f1, text="Step 1.  엑셀 파일 분할",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
-            row=0, column=0, columnspan=2, padx=16, pady=(14, 8), sticky="w")
+            row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
 
+        # 원본 파일
+        ctk.CTkLabel(f1, text="원본 파일", font=ctk.CTkFont(size=11),
+                     text_color="gray").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
+        src_row = ctk.CTkFrame(f1, fg_color="transparent")
+        src_row.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
+        src_row.grid_columnconfigure(0, weight=1)
         self.file_var = ctk.StringVar()
-        ctk.CTkEntry(f1, textvariable=self.file_var, state="readonly",
-                     font=ctk.CTkFont(size=11), height=36).grid(
-            row=1, column=0, padx=(16, 8), pady=(0, 14), sticky="ew")
-        ctk.CTkButton(f1, text="파일 찾기", width=90, height=36,
-                      command=self._browse_file).grid(
-            row=1, column=1, padx=(0, 16), pady=(0, 14))
+        ctk.CTkEntry(src_row, textvariable=self.file_var, state="readonly",
+                     font=ctk.CTkFont(size=11), height=34).grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        ctk.CTkButton(src_row, text="찾기", width=70, height=34,
+                      command=self._browse_src).grid(row=0, column=1)
 
-        # ── 2. 로그인 정보 ──
-        f2 = ctk.CTkFrame(self)
+        # 저장 폴더
+        ctk.CTkLabel(f1, text="분할 파일 저장 폴더", font=ctk.CTkFont(size=11),
+                     text_color="gray").grid(row=3, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
+        out_row = ctk.CTkFrame(f1, fg_color="transparent")
+        out_row.grid(row=4, column=0, columnspan=2, padx=16, pady=(0, 12), sticky="ew")
+        out_row.grid_columnconfigure(0, weight=1)
+        self.out_dir_var = ctk.StringVar()
+        ctk.CTkEntry(out_row, textvariable=self.out_dir_var, state="readonly",
+                     font=ctk.CTkFont(size=11), height=34).grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        ctk.CTkButton(out_row, text="변경", width=70, height=34,
+                      command=self._browse_out).grid(row=0, column=1)
+
+        # 분할 버튼 + 결과
+        split_bottom = ctk.CTkFrame(f1, fg_color="transparent")
+        split_bottom.grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="ew")
+        self.split_btn = ctk.CTkButton(split_bottom, text="파일 분할", width=110, height=36,
+                                       fg_color="#546e7a", hover_color="#37474f",
+                                       command=self._start_split)
+        self.split_btn.pack(side="left")
+        self.split_result_var = ctk.StringVar(value="")
+        ctk.CTkLabel(split_bottom, textvariable=self.split_result_var,
+                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(14, 0))
+
+        # 분할 결과 정보 박스 (분할 후 표시)
+        self.split_info_frame = ctk.CTkFrame(f1, fg_color="#e8f5e9", corner_radius=8)
+        self.split_info_frame.grid(row=6, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="ew")
+        self.split_info_frame.grid_columnconfigure(0, weight=1)
+        self.split_info_frame.grid_remove()  # 초기엔 숨김
+
+        info_top = ctk.CTkFrame(self.split_info_frame, fg_color="transparent")
+        info_top.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="ew")
+        info_top.grid_columnconfigure(0, weight=1)
+
+        self.info_folder_var = ctk.StringVar(value="")
+        ctk.CTkLabel(info_top, textvariable=self.info_folder_var,
+                     font=ctk.CTkFont(size=11), text_color="#1b5e20", anchor="w").grid(
+            row=0, column=0, sticky="ew")
+        self.open_folder_btn = ctk.CTkButton(
+            info_top, text="폴더 열기", width=80, height=26,
+            fg_color="#2e7d32", hover_color="#1b5e20",
+            font=ctk.CTkFont(size=11), command=self._open_split_folder
+        )
+        self.open_folder_btn.grid(row=0, column=1, padx=(8, 0))
+
+        # ── Step 2. 로그인 정보 ──
+        f2 = ctk.CTkFrame(sc)
         f2.grid(row=2, column=0, padx=24, pady=(12, 0), sticky="ew")
         f2.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(f2, text="2.  토스페이먼츠 로그인 정보",
+        ctk.CTkLabel(f2, text="Step 2.  토스페이먼츠 로그인 정보",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
             row=0, column=0, columnspan=2, padx=16, pady=(14, 8), sticky="w")
 
@@ -121,113 +171,198 @@ class App(ctk.CTk):
             row=1, column=0, padx=(16, 8), pady=4, sticky="w")
         self.id_var = ctk.StringVar(value=self.config_data.get("user_id", ""))
         ctk.CTkEntry(f2, textvariable=self.id_var, height=36,
-                     font=ctk.CTkFont(size=12)).grid(
-            row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
+                     font=ctk.CTkFont(size=12)).grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
 
         ctk.CTkLabel(f2, text="비밀번호", font=ctk.CTkFont(size=12), width=60).grid(
             row=2, column=0, padx=(16, 8), pady=4, sticky="w")
         self.pw_var = ctk.StringVar(value=self.config_data.get("user_pw", ""))
         ctk.CTkEntry(f2, textvariable=self.pw_var, show="●", height=36,
-                     font=ctk.CTkFont(size=12)).grid(
-            row=2, column=1, padx=(0, 16), pady=4, sticky="ew")
+                     font=ctk.CTkFont(size=12)).grid(row=2, column=1, padx=(0, 16), pady=4, sticky="ew")
 
         has_saved = bool(self.config_data.get("user_id") or self.config_data.get("user_pw"))
-        saved_text = "✅  저장된 설정을 불러왔습니다. 틀리면 수정 후 시작하세요." if has_saved else "⚠️  저장된 설정이 없습니다. 입력 후 시작하세요."
-        saved_color = "#2e7d32" if has_saved else "#b45309"
+        saved_text = "✅  저장된 설정을 불러왔습니다." if has_saved else "⚠️  저장된 설정이 없습니다. 입력해주세요."
         ctk.CTkLabel(f2, text=saved_text, font=ctk.CTkFont(size=11),
-                     text_color=saved_color).grid(
+                     text_color="#2e7d32" if has_saved else "#b45309").grid(
             row=3, column=0, columnspan=2, padx=16, pady=(6, 14), sticky="w")
 
-        # ── 시작 버튼 ──
-        self.start_btn = ctk.CTkButton(
-            self, text="▶   업로드 시작",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            height=50, corner_radius=10,
-            command=self._start
-        )
-        self.start_btn.grid(row=3, column=0, padx=24, pady=16, sticky="ew")
-
-        # ── 진행 상황 ──
-        f3 = ctk.CTkFrame(self)
-        f3.grid(row=4, column=0, padx=24, pady=(0, 0), sticky="ew")
+        # ── Step 3. 업로드 범위 ──
+        f3 = ctk.CTkFrame(sc)
+        f3.grid(row=3, column=0, padx=24, pady=(12, 0), sticky="ew")
         f3.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(f3, text="진행 상황",
+        ctk.CTkLabel(f3, text="Step 3.  업로드 범위 설정",
+                     font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
+
+        # 업로드 폴더 선택
+        ctk.CTkLabel(f3, text="업로드할 파일 폴더", font=ctk.CTkFont(size=11),
+                     text_color="gray").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
+        upload_dir_row = ctk.CTkFrame(f3, fg_color="transparent")
+        upload_dir_row.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
+        upload_dir_row.grid_columnconfigure(0, weight=1)
+
+        self.upload_dir_var = ctk.StringVar(value="")
+        ctk.CTkEntry(upload_dir_row, textvariable=self.upload_dir_var, state="readonly",
+                     font=ctk.CTkFont(size=11), height=34).grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        ctk.CTkButton(upload_dir_row, text="선택", width=60, height=34,
+                      command=self._load_existing_folder).grid(row=0, column=1, padx=(0, 8))
+        self.step3_open_btn = ctk.CTkButton(
+            upload_dir_row, text="폴더 열기", width=80, height=34,
+            fg_color="#2e7d32", hover_color="#1b5e20",
+            font=ctk.CTkFont(size=11), state="disabled",
+            command=self._open_split_folder
+        )
+        self.step3_open_btn.grid(row=0, column=2)
+
+        # 범위 설정
+        self.range_all_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(f3, text="전체 파일 업로드",
+                        variable=self.range_all_var, command=self._toggle_range,
+                        font=ctk.CTkFont(size=12)).grid(
+            row=3, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="w")
+
+        range_row = ctk.CTkFrame(f3, fg_color="transparent")
+        range_row.grid(row=4, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
+
+        ctk.CTkLabel(range_row, text="시작 번호", font=ctk.CTkFont(size=12)).pack(side="left")
+        self.start_num_var = ctk.StringVar(value="1")
+        self.start_entry = ctk.CTkEntry(range_row, textvariable=self.start_num_var,
+                                        width=60, height=32, font=ctk.CTkFont(size=12), justify="center")
+        self.start_entry.pack(side="left", padx=(6, 16))
+
+        ctk.CTkLabel(range_row, text="끝 번호", font=ctk.CTkFont(size=12)).pack(side="left")
+        self.end_num_var = ctk.StringVar(value="")
+        self.end_entry = ctk.CTkEntry(range_row, textvariable=self.end_num_var,
+                                      width=60, height=32, font=ctk.CTkFont(size=12), justify="center")
+        self.end_entry.pack(side="left", padx=(6, 0))
+
+        self.total_label = ctk.CTkLabel(range_row, text="  (폴더를 선택해주세요)",
+                                        font=ctk.CTkFont(size=11), text_color="gray")
+        self.total_label.pack(side="left", padx=(8, 0))
+
+        self._toggle_range()
+
+        # ── 업로드 버튼 ──
+        self.start_btn = ctk.CTkButton(
+            sc, text="▶   업로드 시작",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            height=50, corner_radius=10,
+            state="disabled",
+            command=self._start_upload
+        )
+        self.start_btn.grid(row=4, column=0, padx=24, pady=16, sticky="ew")
+
+        # ── 진행 상황 ──
+        fp = ctk.CTkFrame(sc)
+        fp.grid(row=5, column=0, padx=24, pady=(0, 0), sticky="ew")
+        fp.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(fp, text="진행 상황",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
             row=0, column=0, padx=16, pady=(14, 6), sticky="w")
 
         self.status_var = ctk.StringVar(value="대기 중...")
-        self.status_label = ctk.CTkLabel(
-            f3, textvariable=self.status_var,
-            font=ctk.CTkFont(size=12), text_color="#555555", anchor="w"
-        )
+        self.status_label = ctk.CTkLabel(fp, textvariable=self.status_var,
+                                         font=ctk.CTkFont(size=12), text_color="#555555", anchor="w")
         self.status_label.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew")
 
-        self.progress_bar = ctk.CTkProgressBar(f3, height=16, corner_radius=8)
+        self.progress_bar = ctk.CTkProgressBar(fp, height=16, corner_radius=8)
         self.progress_bar.set(0)
         self.progress_bar.grid(row=2, column=0, padx=16, pady=(0, 6), sticky="ew")
 
         self.count_var = ctk.StringVar(value="")
-        ctk.CTkLabel(f3, textvariable=self.count_var,
+        ctk.CTkLabel(fp, textvariable=self.count_var,
                      font=ctk.CTkFont(size=11), text_color="gray").grid(
             row=3, column=0, padx=16, pady=(0, 14), sticky="e")
 
         # ── 로그 ──
-        f4 = ctk.CTkFrame(self)
-        f4.grid(row=5, column=0, padx=24, pady=(12, 24), sticky="nsew")
-        f4.grid_columnconfigure(0, weight=1)
-        f4.grid_rowconfigure(1, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        fl = ctk.CTkFrame(sc)
+        fl.grid(row=6, column=0, padx=24, pady=(12, 24), sticky="nsew")
+        fl.grid_columnconfigure(0, weight=1)
+        fl.grid_rowconfigure(1, weight=1)
+        sc.grid_rowconfigure(6, weight=1)
 
-        ctk.CTkLabel(f4, text="작업 로그",
+        ctk.CTkLabel(fl, text="작업 로그",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
             row=0, column=0, padx=16, pady=(14, 6), sticky="w")
 
-        self.log_text = ctk.CTkTextbox(
-            f4, font=ctk.CTkFont(family="Courier New", size=11),
-            state="disabled", wrap="word"
-        )
+        self.log_text = ctk.CTkTextbox(fl, font=ctk.CTkFont(family="Courier New", size=11),
+                                       state="disabled", wrap="word")
         self.log_text.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
 
-    def _browse_file(self):
+    # ── 헬퍼 ─────────────────────────────────────
+    def _toggle_range(self):
+        state = "disabled" if self.range_all_var.get() else "normal"
+        self.start_entry.configure(state=state)
+        self.end_entry.configure(state=state)
+
+    def _browse_src(self):
         path = filedialog.askopenfilename(
             title="현금영수증 엑셀 파일 선택",
             filetypes=[("Excel 파일", "*.xlsx *.xls"), ("모든 파일", "*.*")]
         )
         if path:
             self.file_var.set(path)
+            default_out = os.path.join(os.path.dirname(path), "현금영수증_분할")
+            self.out_dir_var.set(default_out)
+            self.split_files = []
+            self.split_result_var.set("")
+            self.total_label.configure(text="  (분할 먼저 실행해주세요)", text_color="gray")
+            self.start_btn.configure(state="disabled")
+            self.split_info_frame.grid_remove()
 
-    def _start(self):
-        if self.running:
+    def _load_existing_folder(self):
+        """분할 파일이 있는 폴더를 선택해서 업로드 목록으로 불러옴"""
+        folder = filedialog.askdirectory(title="업로드할 분할 파일 폴더 선택")
+        if not folder:
+            return
+        self._apply_upload_folder(folder)
+
+    def _apply_upload_folder(self, folder: str):
+        """폴더를 스캔해서 분할 파일 목록을 Step 3에 반영"""
+        import glob
+        files = sorted(
+            glob.glob(os.path.join(folder, "현금영수증_분할_*.xlsx")),
+            key=lambda f: int(os.path.splitext(os.path.basename(f))[0].split("_")[-1])
+        )
+        if not files:
+            messagebox.showwarning("알림", "선택한 폴더에 분할 파일이 없습니다.\n(현금영수증_분할_N.xlsx 형식의 파일을 찾을 수 없음)")
             return
 
-        file_path = self.file_var.get().strip()
-        user_id = self.id_var.get().strip()
-        user_pw = self.pw_var.get().strip()
+        n = len(files)
+        self.split_files = files
+        self.split_save_dir = folder
+        self.upload_dir_var.set(folder)
+        self.total_label.configure(text=f"  (전체 {n}개)", text_color="#2e7d32")
+        self.start_num_var.set("1")
+        self.end_num_var.set(str(n))
+        self.start_btn.configure(state="normal")
+        self.step3_open_btn.configure(state="normal")
 
-        if not file_path:
-            messagebox.showwarning("알림", "엑셀 파일을 선택해주세요.")
-            return
-        if not os.path.isfile(file_path):
-            messagebox.showwarning("알림", "선택한 파일이 존재하지 않습니다.")
-            return
-        if not user_id or not user_pw:
-            messagebox.showwarning("알림", "아이디와 비밀번호를 입력해주세요.")
-            return
+    def _open_split_folder(self):
+        folder = getattr(self, "split_save_dir", None)
+        if folder and os.path.exists(folder):
+            import subprocess, sys
+            if sys.platform == "win32":
+                os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", folder])
+            else:
+                subprocess.run(["xdg-open", folder])
 
-        save_config(user_id, user_pw)
+    def _browse_out(self):
+        path = filedialog.askdirectory(title="분할 파일 저장 폴더 선택")
+        if path:
+            self.out_dir_var.set(path)
 
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        self.log_text.configure(state="disabled")
-        self.progress_bar.set(0)
-        self.count_var.set("")
+    def _log(self, text, color=None):
+        self.msg_queue.put(("log", text, color))
 
-        self.running = True
-        self.start_btn.configure(state="disabled", text="⏳  업로드 중...")
+    def _set_status(self, text, color="#555555"):
+        self.msg_queue.put(("status", text, color))
 
-        t = threading.Thread(target=self._run, args=(file_path, user_id, user_pw), daemon=True)
-        t.start()
+    def _set_progress(self, cur, total):
+        self.msg_queue.put(("progress", cur, total))
 
     def _poll_queue(self):
         try:
@@ -235,7 +370,7 @@ class App(ctk.CTk):
                 msg = self.msg_queue.get_nowait()
                 kind = msg[0]
                 if kind == "log":
-                    _, text, color = msg
+                    _, text, _ = msg
                     ts = datetime.now().strftime("%H:%M:%S")
                     self.log_text.configure(state="normal")
                     self.log_text.insert("end", f"[{ts}] {text}\n")
@@ -249,81 +384,152 @@ class App(ctk.CTk):
                     _, cur, total = msg
                     self.progress_bar.set(cur / total if total > 0 else 0)
                     self.count_var.set(f"{cur} / {total} 파일 완료")
+                elif kind == "split_done":
+                    _, files = msg
+                    n = len(files)
+                    if n > 0:
+                        self.split_result_var.set(f"✅  총 {n}개 파일 생성됨")
+                        folder = os.path.dirname(files[0])
+                        self.info_folder_var.set(f"📁  {folder}")
+                        self.split_info_frame.grid()
+                        self._apply_upload_folder(folder)
+                    self.split_btn.configure(state="normal", text="파일 분할")
+                    self.running = False
                 elif kind == "done":
-                    self.start_btn.configure(state="normal", text="▶   업로드 시작")
+                    self.start_btn.configure(state="normal" if self.split_files else "disabled",
+                                             text="▶   업로드 시작")
                     self.running = False
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
 
-    def _log(self, text, color=None):
-        self.msg_queue.put(("log", text, color))
+    # ── 분할 ─────────────────────────────────────
+    def _start_split(self):
+        if self.running:
+            return
+        file_path = self.file_var.get().strip()
+        out_dir = self.out_dir_var.get().strip()
+        if not file_path:
+            messagebox.showwarning("알림", "원본 엑셀 파일을 선택해주세요.")
+            return
+        if not os.path.isfile(file_path):
+            messagebox.showwarning("알림", "선택한 파일이 존재하지 않습니다.")
+            return
+        if not out_dir:
+            messagebox.showwarning("알림", "분할 파일 저장 폴더를 지정해주세요.")
+            return
 
-    def _set_status(self, text, color="#555555"):
-        self.msg_queue.put(("status", text, color))
+        self.running = True
+        self.split_btn.configure(state="disabled", text="분할 중...")
+        self.split_result_var.set("")
+        self.split_files = []
+        self.start_btn.configure(state="disabled")
 
-    def _set_progress(self, cur, total):
-        self.msg_queue.put(("progress", cur, total))
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self.progress_bar.set(0)
+        self.count_var.set("")
 
-    def _run(self, file_path, user_id, user_pw):
-        tmp_dir = None
+        threading.Thread(target=self._run_split, args=(file_path, out_dir), daemon=True).start()
+
+    def _run_split(self, file_path, out_dir):
+        self._set_status("엑셀 파일 분할 중...", "#1565c0")
+        self._log("[ 파일 분할 ] 시작")
         try:
-            # 1단계: 엑셀 분할 (실제 동작)
-            self._set_status("엑셀 파일 분할 중...", "#1565c0")
-            self._log("[ 1단계 ] 엑셀 파일 분할 시작")
-            tmp_dir = tempfile.mkdtemp(prefix="cash_receipt_")
-            try:
-                split_files = split_excel(file_path, tmp_dir)
-            except Exception as e:
-                self._log(f"❌ 엑셀 분할 실패: {e}")
-                self._set_status("❌ 실패: 엑셀 파일을 읽을 수 없습니다", "#c62828")
-                self.msg_queue.put(("done",))
-                return
-            total = len(split_files)
-            self._log(f"✅ 분할 완료 → 총 {total}개 파일 생성됨")
-            self._set_progress(0, total)
-            time.sleep(0.5)
+            year_month = datetime.now().strftime("%Y_%m")
+            save_dir = os.path.join(out_dir, year_month)
+            files = split_excel(file_path, save_dir)
+            self._log(f"✅ 분할 완료 → {len(files)}개 파일")
+            self._log(f"  저장 위치: {save_dir}")
+            self._set_status(f"✅ 분할 완료  |  총 {len(files)}개 파일 → {save_dir}", "#2e7d32")
+            self.msg_queue.put(("split_done", files))
+        except Exception as e:
+            self._log(f"❌ 분할 실패: {e}")
+            self._set_status("❌ 분할 실패", "#c62828")
+            self.msg_queue.put(("split_done", []))
 
-            # 2단계: 크롬 드라이버 (시뮬레이션)
+    # ── 업로드 ───────────────────────────────────
+    def _start_upload(self):
+        if self.running:
+            return
+        if not self.split_files:
+            messagebox.showwarning("알림", "먼저 파일 분할을 실행해주세요.")
+            return
+
+        user_id = self.id_var.get().strip()
+        user_pw = self.pw_var.get().strip()
+        if not user_id or not user_pw:
+            messagebox.showwarning("알림", "아이디와 비밀번호를 입력해주세요.")
+            return
+
+        total = len(self.split_files)
+        if not self.range_all_var.get():
+            try:
+                start_n = int(self.start_num_var.get())
+                end_n = int(self.end_num_var.get())
+                if start_n < 1 or end_n < start_n or start_n > total:
+                    raise ValueError
+            except ValueError:
+                messagebox.showwarning("알림", f"업로드 범위를 올바르게 입력해주세요.\n(1 ~ {total} 사이, 시작 ≤ 끝)")
+                return
+
+        save_config(user_id, user_pw)
+
+        self.running = True
+        self.start_btn.configure(state="disabled", text="⏳  업로드 중...")
+
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self.progress_bar.set(0)
+        self.count_var.set("")
+
+        if self.range_all_var.get():
+            upload_files = self.split_files
+        else:
+            s = int(self.start_num_var.get())
+            e = min(int(self.end_num_var.get()), total)
+            upload_files = self.split_files[s - 1:e]
+
+        threading.Thread(target=self._run_upload, args=(upload_files, user_id, user_pw), daemon=True).start()
+
+    def _run_upload(self, upload_files, user_id, user_pw):
+        upload_count = len(upload_files)
+        try:
+            # 크롬 드라이버 (시뮬레이션)
             self._set_status("크롬 드라이버 준비 중...", "#1565c0")
-            self._log("[ 2단계 ] 크롬 드라이버 초기화 중... (테스트: 생략)")
+            self._log("[ 업로드 ] 크롬 드라이버 초기화 중... (테스트: 생략)")
             time.sleep(1)
             self._log("✅ 크롬 드라이버 초기화 완료 (시뮬레이션)")
 
-            # 3단계: 로그인 (시뮬레이션)
+            # 로그인 (시뮬레이션)
             self._set_status("토스페이먼츠 로그인 중...", "#1565c0")
-            self._log("[ 3단계 ] 로그인 시도 중... (테스트: 생략)")
+            self._log(f"  로그인 시도... ID: {user_id} (테스트: 생략)")
             time.sleep(1)
-            self._log(f"✅ 로그인 완료 (시뮬레이션) - ID: {user_id}")
+            self._log("✅ 로그인 완료 (시뮬레이션)")
 
-            # 4단계: 업로드 (시뮬레이션)
-            self._set_status(f"파일 업로드 중... (0 / {total})", "#1565c0")
-            self._log("[ 4단계 ] 파일 업로드 시작 (테스트: 1초 딜레이로 시뮬레이션)")
-            for idx, file in enumerate(split_files, 1):
+            # 업로드
+            self._set_status(f"파일 업로드 중... (0 / {upload_count})", "#1565c0")
+            self._log(f"[ 업로드 시작 ] {upload_count}개 파일 (테스트: 1초 딜레이)")
+            for idx, file in enumerate(upload_files, 1):
                 fname = os.path.basename(file)
-                self._set_status(f"업로드 중: {fname}  ({idx} / {total})", "#1565c0")
-                self._log(f"  [{idx}/{total}] {fname} 업로드 중...")
+                self._set_status(f"업로드 중: {fname}  ({idx} / {upload_count})", "#1565c0")
+                self._log(f"  [{idx}/{upload_count}] {fname} 업로드 중...")
                 time.sleep(1)
-                self._log(f"  ✅ [{idx}/{total}] {fname} 업로드 완료 (시뮬레이션)")
-                self._set_progress(idx, total)
+                self._log(f"  ✅ [{idx}/{upload_count}] {fname} 업로드 완료 (시뮬레이션)")
+                self._set_progress(idx, upload_count)
 
-            # 완료
-            self._set_status(f"✅ 완료!  총 {total}개 파일 모두 업로드 성공", "#2e7d32")
+            self._set_status(f"✅ 완료!  {upload_count}개 파일 업로드 성공", "#2e7d32")
             self._log("")
-            self._log(f"🎉 모든 작업 완료!  {total}개 파일 업로드 성공")
-            self.after(0, lambda: messagebox.showinfo(
-                "완료", f"총 {total}개 파일을 모두 업로드했습니다!\n\n창을 닫아도 됩니다."
+            self._log(f"🎉 완료!  {upload_count}개 파일 업로드 성공")
+            self.after(0, lambda n=upload_count: messagebox.showinfo(
+                "완료", f"{n}개 파일을 모두 업로드했습니다!\n\n창을 닫아도 됩니다."
             ))
-
         except Exception as e:
             self._log(f"❌ 예기치 못한 오류: {e}")
             self._set_status("❌ 예기치 못한 오류 발생", "#c62828")
         finally:
-            if tmp_dir and os.path.exists(tmp_dir):
-                try:
-                    shutil.rmtree(tmp_dir)
-                except Exception:
-                    pass
             self.msg_queue.put(("done",))
 
 
