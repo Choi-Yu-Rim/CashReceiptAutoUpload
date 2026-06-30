@@ -1,0 +1,4 @@
+customtkinter
+openpyxl
+selenium
+webdriver-manager
