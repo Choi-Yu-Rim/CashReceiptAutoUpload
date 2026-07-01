@@ -42,9 +42,25 @@ def save_config(user_id, user_pw):
 
 def split_excel(file_path: str, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
-    wb = openpyxl.load_workbook(file_path)
-    ws = wb.active
-    all_rows = list(ws.iter_rows(values_only=True))
+
+    with open(file_path, "rb") as f:
+        magic = f.read(8)
+
+    if magic[:4] == b'PK\x03\x04':
+        # .xlsx 포맷
+        with open(file_path, "rb") as f:
+            wb = openpyxl.load_workbook(f)
+        ws = wb.active
+        all_rows = list(ws.iter_rows(values_only=True))
+    elif magic[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
+        # .xls 포맷 (구형)
+        import xlrd
+        xls_wb = xlrd.open_workbook(file_path)
+        xls_ws = xls_wb.sheet_by_index(0)
+        all_rows = [tuple(xls_ws.row_values(i)) for i in range(xls_ws.nrows)]
+    else:
+        raise ValueError("파일을 읽을 수 없습니다. DRM 보안이 걸려 있거나 손상된 파일입니다.")
+
     if len(all_rows) < 2:
         raise ValueError("엑셀 파일에 데이터가 없습니다 (헤더 외 행이 필요합니다).")
     header = all_rows[0]
@@ -67,7 +83,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("현금영수증 자동 업로드")
-        self.geometry("660x780")
+        self.geometry("660x860")
         self.minsize(620, 500)
         self.resizable(True, True)
 
@@ -95,18 +111,46 @@ class App(ctk.CTk):
         ctk.CTkLabel(title_frame, text="토스페이먼츠 현금영수증 일괄 업로드 도우미",
                      font=ctk.CTkFont(size=12), text_color="gray").pack(anchor="w", pady=(2, 0))
 
-        # ── Step 1. 파일 분할 ──
+        # ── Step 1. DRM 보안 해제 확인 ──
         f1 = ctk.CTkFrame(sc)
         f1.grid(row=1, column=0, padx=24, pady=(16, 0), sticky="ew")
         f1.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(f1, text="Step 1.  엑셀 파일 분할",
+        ctk.CTkLabel(f1, text="Step 1.  DRM 보안 해제 확인",
+                     font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, padx=16, pady=(14, 8), sticky="w")
+
+        drm_box = ctk.CTkFrame(f1, fg_color="#fff8e1", corner_radius=8)
+        drm_box.grid(row=1, column=0, padx=16, pady=(0, 14), sticky="ew")
+        drm_box.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(drm_box,
+                     text="⚠️  원본 파일에 DRM 보안이 걸려 있으면 파일 분할이 불가합니다.",
+                     font=ctk.CTkFont(size=12), text_color="#e65100", anchor="w").grid(
+            row=0, column=0, padx=14, pady=(10, 4), sticky="w")
+        ctk.CTkLabel(drm_box,
+                     text="아래 순서대로 보안을 해제한 뒤 진행해주세요.",
+                     font=ctk.CTkFont(size=11), text_color="#555555", anchor="w").grid(
+            row=1, column=0, padx=14, pady=(0, 4), sticky="w")
+        ctk.CTkLabel(drm_box,
+                     text="  1. DRM 프로그램이 설치된 회사 PC에서 원본 파일 열기\n"
+                          "  2. 파일 → 다른 이름으로 저장 → Excel 통합 문서 (*.xlsx) 선택 후 저장\n"
+                          "  3. 저장된 파일을 이 프로그램에서 사용",
+                     font=ctk.CTkFont(size=11), text_color="#555555", anchor="w", justify="left").grid(
+            row=2, column=0, padx=14, pady=(0, 12), sticky="w")
+
+        # ── Step 2. 파일 선택 ──
+        f2 = ctk.CTkFrame(sc)
+        f2.grid(row=2, column=0, padx=24, pady=(12, 0), sticky="ew")
+        f2.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(f2, text="Step 2.  파일 선택",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
             row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
 
-        ctk.CTkLabel(f1, text="원본 파일", font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(f2, text="원본 파일", font=ctk.CTkFont(size=11),
                      text_color="gray").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
-        src_row = ctk.CTkFrame(f1, fg_color="transparent")
+        src_row = ctk.CTkFrame(f2, fg_color="transparent")
         src_row.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
         src_row.grid_columnconfigure(0, weight=1)
         self.file_var = ctk.StringVar()
@@ -115,10 +159,10 @@ class App(ctk.CTk):
         ctk.CTkButton(src_row, text="찾기", width=70, height=34,
                       command=self._browse_src).grid(row=0, column=1)
 
-        ctk.CTkLabel(f1, text="분할 파일 저장 폴더", font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(f2, text="분할 파일 저장 폴더", font=ctk.CTkFont(size=11),
                      text_color="gray").grid(row=3, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
-        out_row = ctk.CTkFrame(f1, fg_color="transparent")
-        out_row.grid(row=4, column=0, columnspan=2, padx=16, pady=(0, 12), sticky="ew")
+        out_row = ctk.CTkFrame(f2, fg_color="transparent")
+        out_row.grid(row=4, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="ew")
         out_row.grid_columnconfigure(0, weight=1)
         self.out_dir_var = ctk.StringVar()
         ctk.CTkEntry(out_row, textvariable=self.out_dir_var, state="readonly",
@@ -126,8 +170,17 @@ class App(ctk.CTk):
         ctk.CTkButton(out_row, text="변경", width=70, height=34,
                       command=self._browse_out).grid(row=0, column=1)
 
-        split_bottom = ctk.CTkFrame(f1, fg_color="transparent")
-        split_bottom.grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="ew")
+        # ── Step 3. 파일 분할 ──
+        f3 = ctk.CTkFrame(sc)
+        f3.grid(row=3, column=0, padx=24, pady=(12, 0), sticky="ew")
+        f3.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(f3, text="Step 3.  파일 분할",
+                     font=ctk.CTkFont(size=13, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
+
+        split_bottom = ctk.CTkFrame(f3, fg_color="transparent")
+        split_bottom.grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="ew")
         self.split_btn = ctk.CTkButton(split_bottom, text="파일 분할", width=110, height=36,
                                        fg_color="#546e7a", hover_color="#37474f",
                                        command=self._start_split)
@@ -137,13 +190,13 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=12)).pack(side="left", padx=(14, 0))
 
         # 분할 결과 정보 박스 (분할 후 표시)
-        self.split_info_frame = ctk.CTkFrame(f1, fg_color="#e8f5e9", corner_radius=8)
-        self.split_info_frame.grid(row=6, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="ew")
+        self.split_info_frame = ctk.CTkFrame(f3, fg_color="#e8f5e9", corner_radius=8)
+        self.split_info_frame.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="ew")
         self.split_info_frame.grid_columnconfigure(0, weight=1)
         self.split_info_frame.grid_remove()
 
         info_top = ctk.CTkFrame(self.split_info_frame, fg_color="transparent")
-        info_top.grid(row=0, column=0, padx=12, pady=(10, 4), sticky="ew")
+        info_top.grid(row=0, column=0, padx=12, pady=(10, 10), sticky="ew")
         info_top.grid_columnconfigure(0, weight=1)
 
         self.info_folder_var = ctk.StringVar(value="")
@@ -157,47 +210,43 @@ class App(ctk.CTk):
         )
         self.open_folder_btn.grid(row=0, column=1, padx=(8, 0))
 
-        # ── Step 2. 로그인 정보 ──
-        f2 = ctk.CTkFrame(sc)
-        f2.grid(row=2, column=0, padx=24, pady=(12, 0), sticky="ew")
-        f2.grid_columnconfigure(1, weight=1)
+        # ── Step 4. 업로드 ──
+        f4 = ctk.CTkFrame(sc)
+        f4.grid(row=4, column=0, padx=24, pady=(12, 0), sticky="ew")
+        f4.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(f2, text="Step 2.  토스페이먼츠 로그인 정보",
+        ctk.CTkLabel(f4, text="Step 4.  업로드",
                      font=ctk.CTkFont(size=13, weight="bold")).grid(
-            row=0, column=0, columnspan=2, padx=16, pady=(14, 8), sticky="w")
+            row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
 
-        ctk.CTkLabel(f2, text="아이디", font=ctk.CTkFont(size=12), width=60).grid(
+        # 로그인 정보
+        ctk.CTkLabel(f4, text="아이디", font=ctk.CTkFont(size=12), width=60).grid(
             row=1, column=0, padx=(16, 8), pady=4, sticky="w")
         self.id_var = ctk.StringVar(value=self.config_data.get("user_id", ""))
-        ctk.CTkEntry(f2, textvariable=self.id_var, height=36,
+        ctk.CTkEntry(f4, textvariable=self.id_var, height=36,
                      font=ctk.CTkFont(size=12)).grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
 
-        ctk.CTkLabel(f2, text="비밀번호", font=ctk.CTkFont(size=12), width=60).grid(
+        ctk.CTkLabel(f4, text="비밀번호", font=ctk.CTkFont(size=12), width=60).grid(
             row=2, column=0, padx=(16, 8), pady=4, sticky="w")
         self.pw_var = ctk.StringVar(value=self.config_data.get("user_pw", ""))
-        ctk.CTkEntry(f2, textvariable=self.pw_var, show="●", height=36,
+        ctk.CTkEntry(f4, textvariable=self.pw_var, show="●", height=36,
                      font=ctk.CTkFont(size=12)).grid(row=2, column=1, padx=(0, 16), pady=4, sticky="ew")
 
         has_saved = bool(self.config_data.get("user_id") or self.config_data.get("user_pw"))
         saved_text = "✅  저장된 설정을 불러왔습니다." if has_saved else "⚠️  저장된 설정이 없습니다. 입력해주세요."
-        ctk.CTkLabel(f2, text=saved_text, font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(f4, text=saved_text, font=ctk.CTkFont(size=11),
                      text_color="#2e7d32" if has_saved else "#b45309").grid(
-            row=3, column=0, columnspan=2, padx=16, pady=(6, 14), sticky="w")
+            row=3, column=0, columnspan=2, padx=16, pady=(4, 12), sticky="w")
 
-        # ── Step 3. 업로드 범위 ──
-        f3 = ctk.CTkFrame(sc)
-        f3.grid(row=3, column=0, padx=24, pady=(12, 0), sticky="ew")
-        f3.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(f3, text="Step 3.  업로드 범위 설정",
-                     font=ctk.CTkFont(size=13, weight="bold")).grid(
-            row=0, column=0, columnspan=2, padx=16, pady=(14, 10), sticky="w")
+        # 구분선
+        ctk.CTkFrame(f4, height=1, fg_color="#e0e0e0").grid(
+            row=4, column=0, columnspan=2, padx=16, pady=(0, 12), sticky="ew")
 
         # 업로드 폴더 선택
-        ctk.CTkLabel(f3, text="업로드할 파일 폴더", font=ctk.CTkFont(size=11),
-                     text_color="gray").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
-        upload_dir_row = ctk.CTkFrame(f3, fg_color="transparent")
-        upload_dir_row.grid(row=2, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
+        ctk.CTkLabel(f4, text="업로드할 파일 폴더", font=ctk.CTkFont(size=11),
+                     text_color="gray").grid(row=5, column=0, columnspan=2, padx=16, pady=(0, 4), sticky="w")
+        upload_dir_row = ctk.CTkFrame(f4, fg_color="transparent")
+        upload_dir_row.grid(row=6, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="ew")
         upload_dir_row.grid_columnconfigure(0, weight=1)
 
         self.upload_dir_var = ctk.StringVar(value="")
@@ -215,13 +264,13 @@ class App(ctk.CTk):
 
         # 범위 설정
         self.range_all_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(f3, text="전체 파일 업로드",
+        ctk.CTkCheckBox(f4, text="전체 파일 업로드",
                         variable=self.range_all_var, command=self._toggle_range,
                         font=ctk.CTkFont(size=12)).grid(
-            row=3, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="w")
+            row=7, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="w")
 
-        range_row = ctk.CTkFrame(f3, fg_color="transparent")
-        range_row.grid(row=4, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
+        range_row = ctk.CTkFrame(f4, fg_color="transparent")
+        range_row.grid(row=8, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
 
         ctk.CTkLabel(range_row, text="시작 번호", font=ctk.CTkFont(size=12)).pack(side="left")
         self.start_num_var = ctk.StringVar(value="1")
@@ -241,19 +290,19 @@ class App(ctk.CTk):
 
         self._toggle_range()
 
-        # ── 업로드 버튼 ──
+        # 업로드 버튼
         self.start_btn = ctk.CTkButton(
-            sc, text="▶   업로드 시작",
+            f4, text="▶   업로드 시작",
             font=ctk.CTkFont(size=15, weight="bold"),
             height=50, corner_radius=10,
             state="disabled",
             command=self._start_upload
         )
-        self.start_btn.grid(row=4, column=0, padx=24, pady=16, sticky="ew")
+        self.start_btn.grid(row=9, column=0, columnspan=2, padx=16, pady=(0, 16), sticky="ew")
 
         # ── 진행 상황 ──
         fp = ctk.CTkFrame(sc)
-        fp.grid(row=5, column=0, padx=24, pady=(0, 0), sticky="ew")
+        fp.grid(row=5, column=0, padx=24, pady=(12, 0), sticky="ew")
         fp.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(fp, text="진행 상황",
@@ -306,7 +355,7 @@ class App(ctk.CTk):
             self.out_dir_var.set(default_out)
             self.split_files = []
             self.split_result_var.set("")
-            self.total_label.configure(text="  (분할 먼저 실행해주세요)", text_color="gray")
+            self.total_label.configure(text="  (폴더를 선택해주세요)", text_color="gray")
             self.start_btn.configure(state="disabled")
             self.split_info_frame.grid_remove()
 
@@ -318,7 +367,7 @@ class App(ctk.CTk):
         self._apply_upload_folder(folder)
 
     def _apply_upload_folder(self, folder: str):
-        """폴더를 스캔해서 분할 파일 목록을 Step 3에 반영"""
+        """폴더를 스캔해서 분할 파일 목록을 Step 4에 반영"""
         import glob
         files = sorted(
             glob.glob(os.path.join(folder, "현금영수증_분할_*.xlsx")),
@@ -436,12 +485,10 @@ class App(ctk.CTk):
         self._set_status("엑셀 파일 분할 중...", "#1565c0")
         self._log("[ 파일 분할 ] 시작")
         try:
-            year_month = datetime.now().strftime("%Y_%m")
-            save_dir = os.path.join(out_dir, year_month)
-            files = split_excel(file_path, save_dir)
+            files = split_excel(file_path, out_dir)
             self._log(f"✅ 분할 완료 → {len(files)}개 파일")
-            self._log(f"  저장 위치: {save_dir}")
-            self._set_status(f"✅ 분할 완료  |  총 {len(files)}개 파일 → {save_dir}", "#2e7d32")
+            self._log(f"  저장 위치: {out_dir}")
+            self._set_status(f"✅ 분할 완료  |  총 {len(files)}개 파일 → {out_dir}", "#2e7d32")
             self.msg_queue.put(("split_done", files))
         except Exception as e:
             self._log(f"❌ 분할 실패: {e}")

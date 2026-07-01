@@ -1,22 +1,24 @@
 @echo off
-chcp 65001 > nul
-echo 현금영수증 자동 업로드 프로그램
-echo ================================
+echo Cash Receipt Auto Upload
+echo ========================
 echo.
-echo 필요한 패키지를 설치하고 있습니다...
+echo Installing packages...
 
-pip install -r requirements.txt --quiet
+python -m pip install -r requirements.txt --quiet
 if %errorlevel% neq 0 (
-    echo.
-    echo [오류] pip 설치 실패. Python이 올바르게 설치되어 있는지 확인해주세요.
-    pause
-    exit /b 1
+    py -m pip install -r requirements.txt --quiet
+    if %errorlevel% neq 0 (
+        echo.
+        echo [ERROR] pip install failed. Please check Python installation.
+        pause
+        exit /b 1
+    )
 )
 
 echo.
-echo 프로그램을 시작합니다...
+echo Starting program...
 
-python main.py 2>nul
+python main.py
 if %errorlevel% neq 0 (
     py main.py
 )
