@@ -5,6 +5,11 @@ import queue
 import os
 import json
 import time
+import sys
+import urllib.request
+import shutil
+import tempfile
+import subprocess
 from datetime import datetime
 
 import openpyxl
@@ -16,10 +21,43 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
+VERSION = "1.0.0"
+GITHUB_VERSION_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/version.txt"
+GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/main.py"
+
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 ROWS_PER_FILE = 200
 LOGIN_URL = "https://taxadmin.tosspayments.com/"
 UPLOAD_URL = "https://taxadmin.tosspayments.com/receipt/receiptAdmitReq.jsp?pageNum=2&subNum=3"
+
+
+def fetch_latest_version() -> str | None:
+    """GitHub에서 최신 버전 문자열을 가져옴. 실패 시 None 반환."""
+    try:
+        with urllib.request.urlopen(GITHUB_VERSION_URL, timeout=5) as r:
+            return r.read().decode().strip()
+    except Exception:
+        return None
+
+
+def download_update(dest_path: str) -> bool:
+    """최신 main.py를 dest_path에 저장. 성공 시 True 반환."""
+    try:
+        with urllib.request.urlopen(GITHUB_SCRIPT_URL, timeout=15) as r:
+            content = r.read()
+        with open(dest_path, "wb") as f:
+            f.write(content)
+        return True
+    except Exception:
+        return False
+
+
+def apply_update_and_restart(new_script: str):
+    """현재 스크립트를 새 버전으로 교체하고 재실행."""
+    current = os.path.abspath(__file__)
+    shutil.copy2(new_script, current)
+    subprocess.Popen([sys.executable] + sys.argv)
+    sys.exit(0)
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -47,9 +85,9 @@ def split_excel(file_path: str, output_dir: str):
         magic = f.read(8)
 
     if magic[:4] == b'PK\x03\x04':
-        # .xlsx 포맷
+        # .xlsx 포맷 (data_only=True: 수식 대신 마지막 계산된 값을 읽어 분할 파일에 수식 오류 방지)
         with open(file_path, "rb") as f:
-            wb = openpyxl.load_workbook(f)
+            wb = openpyxl.load_workbook(f, data_only=True)
         ws = wb.active
         all_rows = list(ws.iter_rows(values_only=True))
     elif magic[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':
@@ -94,6 +132,7 @@ class App(ctk.CTk):
 
         self._build_ui()
         self._poll_queue()
+        threading.Thread(target=self._check_update, daemon=True).start()
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
@@ -337,6 +376,33 @@ class App(ctk.CTk):
         self.log_text = ctk.CTkTextbox(fl, font=ctk.CTkFont(family="Courier New", size=11),
                                        state="disabled", wrap="word")
         self.log_text.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
+
+    # ── 자동 업데이트 ──────────────────────────────
+    def _check_update(self):
+        latest = fetch_latest_version()
+        if latest and latest != VERSION:
+            self.after(0, lambda: self._prompt_update(latest))
+
+    def _prompt_update(self, latest: str):
+        answer = messagebox.askyesno(
+            "업데이트 알림",
+            f"새 버전이 있습니다.\n\n현재: {VERSION}  →  최신: {latest}\n\n지금 업데이트할까요?"
+        )
+        if not answer:
+            return
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False)
+        tmp.close()
+
+        self._set_status("업데이트 다운로드 중...", "#1565c0")
+        ok = download_update(tmp.name)
+        if ok:
+            messagebox.showinfo("업데이트", "다운로드 완료!\n프로그램을 재시작합니다.")
+            apply_update_and_restart(tmp.name)
+        else:
+            os.unlink(tmp.name)
+            messagebox.showerror("업데이트 실패", "다운로드 중 오류가 발생했습니다.\n수동으로 업데이트해주세요.")
+            self._set_status("대기 중...", "#555555")
 
     # ── 헬퍼 ─────────────────────────────────────
     def _toggle_range(self):
