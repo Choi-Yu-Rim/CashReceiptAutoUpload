@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/version.txt"
 GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/main.py"
 
@@ -396,14 +396,28 @@ class App(ctk.CTk):
             with open(UPDATE_DONE_FILE, "r", encoding="utf-8") as f:
                 info = json.load(f)
             os.remove(UPDATE_DONE_FILE)
-            messagebox.showinfo(
-                "업데이트 완료",
-                f"업데이트가 완료되었습니다.\n\n"
-                f"버전: {info['version']}\n"
-                f"업데이트 시각: {info['updated_at']}"
-            )
+            self._show_update_done_dialog(info["version"], info["updated_at"])
         except Exception:
             pass
+
+    def _show_update_done_dialog(self, version: str, updated_at: str):
+        """업데이트 완료 커스텀 팝업."""
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("업데이트 완료")
+        dlg.geometry("340x200")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.lift()
+        dlg.focus_force()
+
+        ctk.CTkLabel(dlg, text="✅  완료되었습니다.",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(28, 8))
+        ctk.CTkLabel(dlg, text=f"버전: {version}",
+                     font=ctk.CTkFont(size=12), text_color="gray").pack()
+        ctk.CTkLabel(dlg, text=f"업데이트 시각: {updated_at}",
+                     font=ctk.CTkFont(size=12), text_color="gray").pack(pady=(2, 0))
+        ctk.CTkButton(dlg, text="확인", width=100, height=36,
+                      command=dlg.destroy).pack(pady=(24, 0))
 
     def _check_update(self):
         latest = fetch_latest_version()
@@ -411,25 +425,44 @@ class App(ctk.CTk):
             self.after(0, lambda: self._prompt_update(latest))
 
     def _prompt_update(self, latest: str):
-        answer = messagebox.askyesno(
-            "업데이트 알림",
-            f"새 버전이 있습니다.\n\n현재: {VERSION}  →  최신: {latest}\n\n지금 업데이트할까요?"
-        )
-        if not answer:
-            return
+        """업데이트 안내 커스텀 팝업."""
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("업데이트 알림")
+        dlg.geometry("360x220")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.lift()
+        dlg.focus_force()
 
-        tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False)
-        tmp.close()
+        ctk.CTkLabel(dlg, text="업데이트 알림",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(28, 8))
+        ctk.CTkLabel(dlg,
+                     text="버그 수정되었습니다.\n새 버전으로 업데이트 하십시오.",
+                     font=ctk.CTkFont(size=13), justify="center").pack()
+        ctk.CTkLabel(dlg, text=f"현재: {VERSION}  →  최신: {latest}",
+                     font=ctk.CTkFont(size=11), text_color="gray").pack(pady=(6, 0))
 
-        self._set_status("업데이트 다운로드 중...", "#1565c0")
-        ok = download_update(tmp.name)
-        if ok:
-            messagebox.showinfo("업데이트", "다운로드 완료!\n프로그램을 재시작합니다.")
-            apply_update_and_restart(tmp.name, latest)
-        else:
-            os.unlink(tmp.name)
-            messagebox.showerror("업데이트 실패", "다운로드 중 오류가 발생했습니다.\n수동으로 업데이트해주세요.")
-            self._set_status("대기 중...", "#555555")
+        btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_frame.pack(pady=(20, 0))
+
+        def do_update():
+            dlg.destroy()
+            tmp = tempfile.NamedTemporaryFile(suffix=".py", delete=False)
+            tmp.close()
+            self._set_status("업데이트 다운로드 중...", "#1565c0")
+            ok = download_update(tmp.name)
+            if ok:
+                apply_update_and_restart(tmp.name, latest)
+            else:
+                os.unlink(tmp.name)
+                messagebox.showerror("업데이트 실패", "다운로드 중 오류가 발생했습니다.\n수동으로 업데이트해주세요.")
+                self._set_status("대기 중...", "#555555")
+
+        ctk.CTkButton(btn_frame, text="업데이트", width=110, height=38,
+                      command=do_update).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="나중에", width=80, height=38,
+                      fg_color="gray", hover_color="#555555",
+                      command=dlg.destroy).pack(side="left")
 
     # ── 헬퍼 ─────────────────────────────────────
     def _toggle_range(self):
