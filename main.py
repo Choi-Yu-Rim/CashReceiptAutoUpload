@@ -22,8 +22,8 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 VERSION = "1.0.0"
-GITHUB_VERSION_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/version.txt"
-GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/main.py"
+GITHUB_VERSION_URL = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/main/version.txt"
+GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/main/main.py"
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 ROWS_PER_FILE = 200
