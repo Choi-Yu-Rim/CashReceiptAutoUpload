@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/version.txt"
 GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/main.py"
 
@@ -707,6 +707,7 @@ class App(ctk.CTk):
                 self._log("✅ 로그인 완료")
             except Exception as e:
                 self._log(f"❌ 로그인 실패: {e}")
+                self._log(f"  → 현재 URL: {driver.current_url}")
                 self._log("  → 아이디/비밀번호를 다시 확인해주세요")
                 self._set_status("❌ 실패: 로그인 오류", "#c62828")
                 self.msg_queue.put(("done",))
