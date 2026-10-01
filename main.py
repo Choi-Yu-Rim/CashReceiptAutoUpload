@@ -52,10 +52,19 @@ def download_update(dest_path: str) -> bool:
         return False
 
 
-def apply_update_and_restart(new_script: str):
+UPDATE_DONE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".update_done.json")
+
+
+def apply_update_and_restart(new_script: str, new_version: str):
     """현재 스크립트를 새 버전으로 교체하고 재실행."""
     current = os.path.abspath(__file__)
     shutil.copy2(new_script, current)
+    # 재시작 후 팝업을 위해 업데이트 정보 저장
+    with open(UPDATE_DONE_FILE, "w", encoding="utf-8") as f:
+        json.dump({
+            "version": new_version,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }, f, ensure_ascii=False)
     subprocess.Popen([sys.executable] + sys.argv)
     sys.exit(0)
 
@@ -132,6 +141,7 @@ class App(ctk.CTk):
 
         self._build_ui()
         self._poll_queue()
+        self.after(300, self._show_update_done)
         threading.Thread(target=self._check_update, daemon=True).start()
 
     def _build_ui(self):
@@ -378,6 +388,23 @@ class App(ctk.CTk):
         self.log_text.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
 
     # ── 자동 업데이트 ──────────────────────────────
+    def _show_update_done(self):
+        """재시작 후 업데이트 완료 알림 표시."""
+        if not os.path.exists(UPDATE_DONE_FILE):
+            return
+        try:
+            with open(UPDATE_DONE_FILE, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            os.remove(UPDATE_DONE_FILE)
+            messagebox.showinfo(
+                "업데이트 완료",
+                f"업데이트가 완료되었습니다.\n\n"
+                f"버전: {info['version']}\n"
+                f"업데이트 시각: {info['updated_at']}"
+            )
+        except Exception:
+            pass
+
     def _check_update(self):
         latest = fetch_latest_version()
         if latest and latest != VERSION:
@@ -398,7 +425,7 @@ class App(ctk.CTk):
         ok = download_update(tmp.name)
         if ok:
             messagebox.showinfo("업데이트", "다운로드 완료!\n프로그램을 재시작합니다.")
-            apply_update_and_restart(tmp.name)
+            apply_update_and_restart(tmp.name, latest)
         else:
             os.unlink(tmp.name)
             messagebox.showerror("업데이트 실패", "다운로드 중 오류가 발생했습니다.\n수동으로 업데이트해주세요.")
