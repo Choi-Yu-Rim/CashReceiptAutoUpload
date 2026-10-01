@@ -31,13 +31,14 @@ LOGIN_URL = "https://taxadmin.tosspayments.com/"
 UPLOAD_URL = "https://taxadmin.tosspayments.com/receipt/receiptAdmitReq.jsp?pageNum=2&subNum=3"
 
 
-def fetch_latest_version() -> str | None:
-    """GitHub에서 최신 버전 문자열을 가져옴. 실패 시 None 반환."""
+def fetch_latest_version() -> tuple[str | None, str]:
+    """GitHub에서 최신 버전 문자열을 가져옴. (버전, 로그메시지) 반환."""
     try:
         with urllib.request.urlopen(GITHUB_VERSION_URL, timeout=5) as r:
-            return r.read().decode().strip()
-    except Exception:
-        return None
+            latest = r.read().decode().strip()
+        return latest, f"최신 버전 확인: {latest} (현재: {VERSION})"
+    except Exception as e:
+        return None, f"버전 확인 실패: {e}"
 
 
 def download_update(dest_path: str) -> bool:
@@ -424,9 +425,12 @@ class App(ctk.CTk):
                       command=dlg.destroy).pack(pady=(24, 0))
 
     def _check_update(self):
-        latest = fetch_latest_version()
+        latest, log_msg = fetch_latest_version()
+        self._log(f"[업데이트 확인] {log_msg}")
         if latest and latest != VERSION:
             self.after(0, lambda: self._prompt_update(latest))
+        elif latest == VERSION:
+            self._log("[업데이트 확인] 최신 버전입니다.")
 
     def _prompt_update(self, latest: str):
         """업데이트 안내 커스텀 팝업."""
