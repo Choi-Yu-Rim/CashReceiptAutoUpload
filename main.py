@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/version.txt"
 GITHUB_SCRIPT_URL  = "https://raw.githubusercontent.com/Choi-Yu-Rim/CashReceiptAutoUpload/master/main.py"
 
@@ -155,8 +155,12 @@ class App(ctk.CTk):
         # 제목
         title_frame = ctk.CTkFrame(sc, fg_color="transparent")
         title_frame.grid(row=0, column=0, padx=24, pady=(24, 0), sticky="ew")
-        ctk.CTkLabel(title_frame, text="현금영수증 자동 업로드",
-                     font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+        title_row = ctk.CTkFrame(title_frame, fg_color="transparent")
+        title_row.pack(anchor="w", fill="x")
+        ctk.CTkLabel(title_row, text="현금영수증 자동 업로드",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
+        ctk.CTkLabel(title_row, text=f"v{VERSION}",
+                     font=ctk.CTkFont(size=12), text_color="gray").pack(side="left", padx=(10, 0), anchor="s", pady=(0, 3))
         ctk.CTkLabel(title_frame, text="토스페이먼츠 현금영수증 일괄 업로드 도우미",
                      font=ctk.CTkFont(size=12), text_color="gray").pack(anchor="w", pady=(2, 0))
 
